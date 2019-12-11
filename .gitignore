@@ -112,3 +112,6 @@ dmypy.json
 
 # sub module
 /hdb_api
+
+# log files
+*.log

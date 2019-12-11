@@ -40,3 +40,8 @@ Gettting ESP data for FLAMING GORGE RESERVOIR
   Writting FLAMING GORGE RESERVOIR VOLUME OF INFLOW espdly.5yr to HDB.
     16% of data failed - [500, 500, 500, 500, 500, 500]
   Writting FLAMING GORGE RESERVOIR VOLUME OF INFLOW espdly.5yr to HDB.
+Gettting ESP data for FONTENELLE RESERVOIR
+  Downloading and processing espdly.5yr
+  Downloading and processing espdly.1yr
+  Downloading and processing espmvol.5yr.raw
+  Downloading and processing espmvol.5yr.adj
