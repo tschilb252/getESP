@@ -13,6 +13,8 @@ import numpy as np
 from datetime import date
 from os import path, makedirs
 import concurrent.futures
+import logging
+from logging.handlers import TimedRotatingFileHandler
 from requests import post as req_post
 from urllib.request import HTTPError
 from hdb_api.hdb_api import Hdb, HdbTables, HdbTimeSeries
@@ -185,9 +187,7 @@ def post_m_write(m_write):
         print(f'    {percent_fail:0.0f}% of data failed')
     return failed_posts
 
-
-
-async def post_traces(df_m_write, m_write_hdr, api_url=HDB_API_URL):
+async def post_traces(df_m_write, m_write_hdr, api_url=HDB_API_URL, workers=8):
     
     def post_chunk(json_chunk):
         return req_post(api_url, json=json_chunk, headers=m_write_hdr)
@@ -196,7 +196,7 @@ async def post_traces(df_m_write, m_write_hdr, api_url=HDB_API_URL):
     for idx, row in df_m_write.iterrows():
         m_write_list.append(json.loads(row['m_write']))
         
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
         loop = asyncio.get_event_loop()
         futures = [
             loop.run_in_executor(
@@ -209,9 +209,29 @@ async def post_traces(df_m_write, m_write_hdr, api_url=HDB_API_URL):
         
         result = await asyncio.gather(*futures)
         return result
-                              
+
+def create_log(path='get_esp.log'):
+    logger = logging.getLogger('get_esp rotating log')
+    logger.setLevel(logging.INFO)
+
+    handler = TimedRotatingFileHandler(
+        path,
+        when="W6",
+        backupCount=1
+    )
+
+    logger.addHandler(handler)
+
+    return logger
+
+def print_and_log(log_str, logger):
+    print(log_str)
+    logger.info(log_str)
+    
 if __name__ == '__main__':
     
+    this_dir = path.dirname(path.realpath(__file__))
+    logger = create_log(path.join(this_dir, 'get_esp.log'))
     config = get_eng_config(db='uc')
     hdb = Hdb(config)
     tbls = HdbTables
@@ -250,12 +270,17 @@ if __name__ == '__main__':
             meta_row = site_datatypes[site_datatypes['site_metadata.nws_code'] == cbrfc_id]
             if not meta_row.empty:
                 sdi = meta_row['site_datatype_id'].iloc[0]
-                hdb_site_name = meta_row['site_metadata.site_name'].iloc[0]
+                hdb_site_name = meta_row['site_metadata.site_name'].iloc[0].upper()
+                datatype_name = meta_row['datatype_metadata.datatype_name'].iloc[0].upper()
             else:
                 continue
-        print(f"Gettting ESP data for {hdb_site_name}")
+
+        print_and_log(f"Gettting ESP data for {hdb_site_name}", logger)
+        
         for frcst_type in frcst_types:
-            print(f'  {frcst_type}')
+            
+            print_and_log(f'  Downloading and processing {frcst_type}', logger)
+            
             frcst_obj = get_frcst_obj(cbrfc_id, frcst_type, mrid_dict)
             frcst_dict[frcst_type][cbrfc_id] = frcst_obj
         failed_posts = []
@@ -263,33 +288,51 @@ if __name__ == '__main__':
             for site_frcst in frcst_dict[frcst_type].keys():
                 df_m_write = frcst_dict[frcst_type][site_frcst]
                 
+                ##############################################
                 # single threaded syncronous application
-                #
-                # for idx, row in df_m_write.iterrows():
-                #     m_write = json.loads(row['m_write'])
-                #     print(f'  Writting {hdb_site_name} {idx}-{frcst_type} to HDB.')
-                #     m_post = req_post(
-                #         HDB_API_URL,
-                #         json=m_write,
-                #         headers=m_write_hdr
-                #     )
-                #     response_code = m_post.status_code
-                #     if not response_code == 200:
-                #         failed_posts.append(
-                #             {f'{idx} {site_frcst}.{frcst_type}': m_write}
-                #         )
-                #         print(f'    Write failed - {response_code}')
-                #     else:
-                #         print('    Success!')
-                
-                # testing async multi-threaded application
-                #
-                print(f'  Writting {hdb_site_name} {frcst_type} to HDB.')
-                m_write_list = []
+                ##############################################
                 for idx, row in df_m_write.iterrows():
-                    m_write_list.append(json.loads(row['m_write']))
-                loop = asyncio.get_event_loop()
-                req = loop.run_until_complete(post_traces(df_m_write, m_write_hdr))
-                print(str(req))
-                sys.exit(0)
-            
+                    m_write = json.loads(row['m_write'])
+                    print_and_log(
+                        f'  Writting {hdb_site_name} {idx}-{frcst_type} to HDB.',
+                )
+                    m_post = req_post(
+                        HDB_API_URL,
+                        json=m_write,
+                        headers=m_write_hdr
+                    )
+                    response_code = m_post.status_code
+                    if not response_code == 200:
+                        failed_posts.append(
+                            {f'{idx} {site_frcst}.{frcst_type}': m_write}
+                        )
+                        print(f'    Write failed - {response_code}')
+                    else:
+                        print('    Success!')
+                
+                
+                ###########################################
+                # testing async multi-threaded application
+                ###########################################
+                # print_and_log(
+                #     f'  Writting {hdb_site_name} {datatype_name} {frcst_type} to HDB.', 
+                #     logger
+                # )
+                
+                # m_write_list = []
+                # for idx, row in df_m_write.iterrows():
+                #     m_write_list.append(json.loads(row['m_write']))
+                # loop = asyncio.get_event_loop()
+                # responses = loop.run_until_complete(
+                #     post_traces(df_m_write, m_write_hdr)
+                # )
+                # status_codes = [i.status_code for i in responses]
+                # if sum(set(status_codes)) == 200:
+                #     print_and_log('    Success!', logger)
+                # else:
+                #     fail_codes = [i for i in status_codes if not i == 200]
+                #     percent_fail = 100 * (len(fail_codes) / len(status_codes))
+                #     print_and_log(
+                #         f'    {percent_fail:0.0f}% of data failed - {fail_codes}', 
+                #         logger
+                #     )
