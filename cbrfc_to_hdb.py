@@ -275,7 +275,7 @@ if __name__ == '__main__':
             else:
                 continue
 
-        print_and_log(f"Gettting ESP data for {hdb_site_name}", logger)
+        print_and_log(f"Getting ESP data for {hdb_site_name}", logger)
         
         for frcst_type in frcst_types:
             
@@ -294,7 +294,7 @@ if __name__ == '__main__':
                 for idx, row in df_m_write.iterrows():
                     m_write = json.loads(row['m_write'])
                     print_and_log(
-                        f'  Writting {hdb_site_name} {idx}-{frcst_type} to HDB.',
+                        f'  Writing {hdb_site_name} {idx}-{frcst_type} to HDB.',
                         logger
                     )
                     m_post = req_post(
@@ -316,7 +316,7 @@ if __name__ == '__main__':
                 # testing async multi-threaded application
                 ###########################################
                 # print_and_log(
-                #     f'  Writting {hdb_site_name} {datatype_name} {frcst_type} to HDB.', 
+                #     f'  Writing {hdb_site_name} {datatype_name} {frcst_type} to HDB.', 
                 #     logger
                 # )
                 
