@@ -295,7 +295,8 @@ if __name__ == '__main__':
                     m_write = json.loads(row['m_write'])
                     print_and_log(
                         f'  Writting {hdb_site_name} {idx}-{frcst_type} to HDB.',
-                )
+                        logger
+                    )
                     m_post = req_post(
                         HDB_API_URL,
                         json=m_write,
