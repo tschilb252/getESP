@@ -7,11 +7,13 @@ Created on Mon Nov  4 08:49:17 2019
 
 import sys
 import json
-from os import path, makedirs
+import asyncio
 import pandas as pd
 import numpy as np
 from datetime import date
-from requests import post
+from os import path, makedirs
+import concurrent.futures
+from requests import post as req_post
 from urllib.request import HTTPError
 from hdb_api.hdb_api import Hdb, HdbTables, HdbTimeSeries
 from hdb_api.hdb_utils import get_eng_config, create_hdb_engine
@@ -19,6 +21,7 @@ from hdb_api.hdb_utils import get_eng_config, create_hdb_engine
 # slots for the following sites need to be created 'NVRN5LOC','GJNC2LOC','GJLOC'
 
 DATA_URL = 'https://www.cbrfc.noaa.gov/outgoing/ucbor'
+HDB_API_URL = 'http://ibr3lcrsrv02.bor.doi.net/series/m-write'
 
 this_dir = path.dirname(path.realpath(__file__))
 cbrfc_dir = path.join(this_dir, 'cbrfc_to_hdb')
@@ -156,6 +159,56 @@ def create_esp_mrids():
 def chunk_requests(req_list, n=100):
     for i in range(0, len(req_list), n):
         yield req_list[i:i + n]
+
+def post_m_write(m_write):
+    m_write_chunks = chunk_requests(m_write)
+    chunk_codes = []
+    failed_posts = []
+    for chunk in m_write_chunks:
+        m_post = req_post(
+            HDB_API_URL,
+            json=chunk,
+            headers=m_write_hdr
+        )
+        response_code = m_post.status_code
+        chunk_codes.append(response_code)
+        if not response_code == 200:
+            print(f'    {response_code}')
+            failed_posts.append(
+                {f'{idx} {site_frcst}.{frcst_type}': chunk}
+            )
+    if sum(set(chunk_codes)) == 200:
+        print('    Success!')
+    else:
+        fail_codes = [i for i in chunk_codes if not i == 200]
+        percent_fail = 100 * (len(fail_codes) / len(chunk_codes))
+        print(f'    {percent_fail:0.0f}% of data failed')
+    return failed_posts
+
+
+
+async def post_traces(df_m_write, m_write_hdr, api_url=HDB_API_URL):
+    
+    def post_chunk(json_chunk):
+        return req_post(api_url, json=json_chunk, headers=m_write_hdr)
+    
+    m_write_list = []
+    for idx, row in df_m_write.iterrows():
+        m_write_list.append(json.loads(row['m_write']))
+        
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+        loop = asyncio.get_event_loop()
+        futures = [
+            loop.run_in_executor(
+                executor, 
+                post_chunk,
+                json_chunk
+            )
+            for json_chunk in m_write_list
+        ]
+        
+        result = await asyncio.gather(*futures)
+        return result
                               
 if __name__ == '__main__':
     
@@ -174,8 +227,7 @@ if __name__ == '__main__':
         'api_pass': 'Moki8080'
     }
     mrid_dict = get_mrid_dict()
-    URL_PREFIX = 'https://www.cbrfc.noaa.gov/outgoing/ucbor'
-    SITE_MAPPING_URL = f'{URL_PREFIX}/idmaplist.csv'
+    SITE_MAPPING_URL = f'{DATA_URL}/idmaplist.csv'
     df_site_map = pd.read_csv(
         SITE_MAPPING_URL,
         dtype={'CBRFCID': str, 'USGSID': str, 'DESCRIPTION': str})
@@ -209,21 +261,35 @@ if __name__ == '__main__':
         failed_posts = []
         for frcst_type in frcst_dict.keys():
             for site_frcst in frcst_dict[frcst_type].keys():
-                for idx, row in frcst_dict[frcst_type][site_frcst].iterrows():
-                    m_write = json.loads(row['m_write'])
-                    print(f'  Writting {hdb_site_name} {idx}-{frcst_type} to HDB.')
-                    m_post = post(
-                        'http://ibr3lcrsrv02.bor.doi.net/series/m-write',
-                        json=m_write,
-                        headers=m_write_hdr
-                    )
-                    response_code = m_post.status_code
-                    if not response_code == 200:
-                        failed_posts.append(
-                            {f'{idx} {site_frcst}.{frcst_type}': m_write}
-                        )
-                        print(f'    Write failed - {response_code}')
-                    else:
-                        print('    Success!')
+                df_m_write = frcst_dict[frcst_type][site_frcst]
+                
+                # single threaded syncronous application
+                #
+                # for idx, row in df_m_write.iterrows():
+                #     m_write = json.loads(row['m_write'])
+                #     print(f'  Writting {hdb_site_name} {idx}-{frcst_type} to HDB.')
+                #     m_post = req_post(
+                #         HDB_API_URL,
+                #         json=m_write,
+                #         headers=m_write_hdr
+                #     )
+                #     response_code = m_post.status_code
+                #     if not response_code == 200:
+                #         failed_posts.append(
+                #             {f'{idx} {site_frcst}.{frcst_type}': m_write}
+                #         )
+                #         print(f'    Write failed - {response_code}')
+                #     else:
+                #         print('    Success!')
+                
+                # testing async multi-threaded application
+                #
+                print(f'  Writting {hdb_site_name} {frcst_type} to HDB.')
+                m_write_list = []
+                for idx, row in df_m_write.iterrows():
+                    m_write_list.append(json.loads(row['m_write']))
+                loop = asyncio.get_event_loop()
+                req = loop.run_until_complete(post_traces(df_m_write, m_write_hdr))
+                print(str(req))
                 sys.exit(0)
             
