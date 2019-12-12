@@ -42,9 +42,13 @@ def get_mrid(trace, frcst_type, mrid_dict):
     return mrid_dict.get(model_name, None)
 
 def get_interval(frcst_type):
-    if 'espdly.' in frcst_type:
-        return 'month'
-    return 'day'
+    interval_dict = {
+        'espdly.5yr': 'day',
+        'espdly.1yr': 'day',
+        'espmvol.5yr.raw': 'month',
+        'espmvol.5yr.adj': 'month'
+    }
+    return interval_dict.get(frcst_type, None)
 
 def get_frcst_type(interval='daily', period=5, adj=False):
     adj_str = 'raw'
@@ -58,7 +62,7 @@ def parse_m_write(col, sdi, frcst_type, mrid_dict):
     m_write_list = []
     mrid = get_mrid(col.name, frcst_type, mrid_dict)
     interval = get_interval(frcst_type)
-    if mrid:
+    if mrid and interval:
         for row in col.items():
             val = float(row[1])
             if not np.isnan(val):
@@ -363,6 +367,7 @@ if __name__ == '__main__':
         else:
             failed_filename = f'{site_frcst}_failed_posts.json'
             failed_path = path.join('failed_posts', failed_filename)
+            failed_posts = [i for i in failed_posts if i]
             with open(failed_path, 'w') as j:
                 json.dump(failed_posts, j)
             percent_fail = 100 * (len(failed_posts) / df_m_write.size)
