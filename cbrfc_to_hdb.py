@@ -10,7 +10,7 @@ import json
 import asyncio
 import pandas as pd
 import numpy as np
-from datetime import date
+from datetime import date, datetime
 from os import path, makedirs
 import concurrent.futures
 import logging
@@ -24,10 +24,7 @@ from hdb_api.hdb_utils import get_eng_config, create_hdb_engine
 
 DATA_URL = 'https://www.cbrfc.noaa.gov/outgoing/ucbor'
 HDB_API_URL = 'http://ibr3lcrsrv02.bor.doi.net/series/m-write'
-
-this_dir = path.dirname(path.realpath(__file__))
-cbrfc_dir = path.join(this_dir, 'cbrfc_to_hdb')
-makedirs(cbrfc_dir, exist_ok=True)
+SITE_MAPPING_URL = f'{DATA_URL}/idmaplist.csv'
 
 def get_mrid_dict():
     with open('mrid_map.json', 'r') as j:
@@ -74,7 +71,9 @@ def parse_m_write(col, sdi, frcst_type, mrid_dict):
                     do_update_y_or_n = True
                 )
                 m_write_list.append(m_write_dict)
-    return json.dumps(m_write_list)
+    if m_write_list:
+        m_write_list = [i for i in m_write_list if i]
+        return json.dumps(m_write_list)
 
 def get_frcst_obj(cbrfc_id, frcst_type, mrid_dict, frcst_url=DATA_URL, write_json=False):
     filename = f'{cbrfc_id}.{frcst_type}'
@@ -95,21 +94,23 @@ def get_frcst_obj(cbrfc_id, frcst_type, mrid_dict, frcst_url=DATA_URL, write_jso
                 parse_dates=['DATE'],
                 index_col = 'DATE'
             )
-        
+        df_vol.dropna(how='all', inplace=True)
         df_vol_stats = df_vol.transpose()
         df_vol_stats = df_vol_stats.describe(percentiles=[0.10, 0.50, 0.90])
         df_vol_stats = df_vol_stats.transpose()
         df_vol['MOST'] = df_vol_stats['50%']
         df_vol['MAX'] = df_vol_stats['90%']
         df_vol['MIN'] = df_vol_stats['10%']
+
         df_m_write = df_vol.apply(
             lambda col: parse_m_write(col, sdi, frcst_type, mrid_dict)
         )
+
         df_m_write = pd.DataFrame(
             {'m_write': df_m_write}
         )
         if write_json:
-            json_path = path.join('cbrfc_to_hdb', f'{filename}.json')
+            json_path = path.join('m_write_jsons', f'{filename}.json')
             df_m_write.to_json(
                 json_path,
                 date_format='iso',
@@ -119,7 +120,7 @@ def get_frcst_obj(cbrfc_id, frcst_type, mrid_dict, frcst_url=DATA_URL, write_jso
     
     except HTTPError:
         print(
-            f"  Skipping {row['CBRFCID']}.{frcst_type}, file not found - "
+            f"    Skipping {row['CBRFCID']}.{frcst_type}, file not found - "
             f"{url}"
         )
 
@@ -187,10 +188,12 @@ def post_m_write(m_write):
         print(f'    {percent_fail:0.0f}% of data failed')
     return failed_posts
 
-async def post_traces(df_m_write, m_write_hdr, api_url=HDB_API_URL, workers=8):
+async def async_post_traces(df_m_write, m_write_hdr, api_url=HDB_API_URL, workers=4):
     
     def post_chunk(json_chunk):
-        return req_post(api_url, json=json_chunk, headers=m_write_hdr)
+        result = req_post(api_url, json=json_chunk, headers=m_write_hdr)
+        if not result.status_code == 200:
+            return json_chunk
     
     m_write_list = []
     for idx, row in df_m_write.iterrows():
@@ -209,6 +212,32 @@ async def post_traces(df_m_write, m_write_hdr, api_url=HDB_API_URL, workers=8):
         
         result = await asyncio.gather(*futures)
         return result
+
+def post_traces(df_m_write, m_write_hdr, api_url=HDB_API_URL):
+    failed_posts = []
+    for idx, row in df_m_write.iterrows():
+        m_write = json.loads(row['m_write'])
+        print_and_log(
+            f'  Writing {hdb_site_name} {idx}-{frcst_type} to HDB.',
+            logger
+        )
+        m_post = req_post(
+            HDB_API_URL,
+            json=m_write,
+            headers=m_write_hdr
+        )
+        response_code = m_post.status_code
+        if not response_code == 200:
+            failed_posts.append(
+                {f'{idx} {site_frcst}.{frcst_type}': m_write}
+            )
+            print_and_log(
+                f'    Write failed - {response_code}', 
+                logger
+            )
+        else:
+            print_and_log('    Success!', logger)
+    return failed_posts
 
 def create_log(path='get_esp.log'):
     logger = logging.getLogger('get_esp rotating log')
@@ -230,8 +259,16 @@ def print_and_log(log_str, logger):
     
 if __name__ == '__main__':
     
+    s_time = datetime.now()
+    async_run = True
     this_dir = path.dirname(path.realpath(__file__))
     logger = create_log(path.join(this_dir, 'get_esp.log'))
+    cbrfc_dir = path.join(this_dir, 'm_write_jsons')
+    makedirs(cbrfc_dir, exist_ok=True)
+    failed_post_dir = path.join(this_dir, 'failed_posts')
+    makedirs(failed_post_dir, exist_ok=True)
+    
+    print_and_log(f'ESP fetch starting at {s_time.strftime("%x %X")}...', logger)
     config = get_eng_config(db='uc')
     hdb = Hdb(config)
     tbls = HdbTables
@@ -247,7 +284,7 @@ if __name__ == '__main__':
         'api_pass': 'Moki8080'
     }
     mrid_dict = get_mrid_dict()
-    SITE_MAPPING_URL = f'{DATA_URL}/idmaplist.csv'
+    
     df_site_map = pd.read_csv(
         SITE_MAPPING_URL,
         dtype={'CBRFCID': str, 'USGSID': str, 'DESCRIPTION': str})
@@ -258,9 +295,10 @@ if __name__ == '__main__':
     mnthly_raw = get_frcst_type(interval='monthly')
     mnthly_adj = get_frcst_type(interval='monthly', adj=True)
     frcst_types = [daily_5yr, daily_1yr, mnthly_raw, mnthly_adj]
-    for frcst_type in frcst_types:
-        frcst_dict[frcst_type] = {}
+        
     for idx, row in df_site_map.iterrows():
+        for frcst_type in frcst_types:
+            frcst_dict[frcst_type] = {}
         site_name = row['DESCRIPTION']
         cbrfc_id = row['CBRFCID']
         usgs_id = str(row['USGSID'])
@@ -287,53 +325,55 @@ if __name__ == '__main__':
         for frcst_type in frcst_dict.keys():
             for site_frcst in frcst_dict[frcst_type].keys():
                 df_m_write = frcst_dict[frcst_type][site_frcst]
-                
-                ##############################################
-                # single threaded syncronous application
-                ##############################################
-                for idx, row in df_m_write.iterrows():
-                    m_write = json.loads(row['m_write'])
-                    print_and_log(
-                        f'  Writing {hdb_site_name} {idx}-{frcst_type} to HDB.',
-                        logger
-                    )
-                    m_post = req_post(
-                        HDB_API_URL,
-                        json=m_write,
-                        headers=m_write_hdr
-                    )
-                    response_code = m_post.status_code
-                    if not response_code == 200:
-                        failed_posts.append(
-                            {f'{idx} {site_frcst}.{frcst_type}': m_write}
-                        )
-                        print(f'    Write failed - {response_code}')
-                    else:
-                        print('    Success!')
-                
-                
+
+                if async_run:
                 ###########################################
                 # testing async multi-threaded application
                 ###########################################
-                # print_and_log(
-                #     f'  Writing {hdb_site_name} {datatype_name} {frcst_type} to HDB.', 
-                #     logger
-                # )
+                    print_and_log(
+                        f'  Writing {hdb_site_name} {datatype_name} {frcst_type} to HDB.', 
+                        logger
+                    )
+                    loop = asyncio.get_event_loop()
+                    async_failed_posts = loop.run_until_complete(
+                        async_post_traces(df_m_write, m_write_hdr)
+                    )
+                    
+                    failed_posts.append(
+                        {f'{site_frcst}.{frcst_type}': async_failed_posts}
+                    )
+
+                else:
+                ##############################################
+                # single threaded syncronous application
+                ##############################################
+                    failed_posts.append(
+                        {
+                            f'{site_frcst}.{frcst_type}':
+                            post_traces(
+                                df_m_write, 
+                                m_write_hdr, 
+                                api_url=HDB_API_URL
+                            )
+                        }
+                    )
                 
-                # m_write_list = []
-                # for idx, row in df_m_write.iterrows():
-                #     m_write_list.append(json.loads(row['m_write']))
-                # loop = asyncio.get_event_loop()
-                # responses = loop.run_until_complete(
-                #     post_traces(df_m_write, m_write_hdr)
-                # )
-                # status_codes = [i.status_code for i in responses]
-                # if sum(set(status_codes)) == 200:
-                #     print_and_log('    Success!', logger)
-                # else:
-                #     fail_codes = [i for i in status_codes if not i == 200]
-                #     percent_fail = 100 * (len(fail_codes) / len(status_codes))
-                #     print_and_log(
-                #         f'    {percent_fail:0.0f}% of data failed - {fail_codes}', 
-                #         logger
-                #     )
+        if not failed_posts:
+            print_and_log('    Success!', logger)
+        else:
+            failed_filename = f'{site_frcst}_failed_posts.json'
+            failed_path = path.join('failed_posts', failed_filename)
+            with open(failed_path, 'w') as j:
+                json.dump(failed_posts, j)
+            percent_fail = 100 * (len(failed_posts) / df_m_write.size)
+            print_and_log(
+                f'    {percent_fail:0.0f}% of data failed.', 
+                logger
+            )
+    e_time = datetime.now()
+    elapsed_sec = (e_time - s_time).seconds
+    print_and_log(
+        f'ESP fetch finished at {e_time.strftime("%x %X")}...'
+        f'Total elapsed time {elapsed_sec / 3600:0.2f} hours. ',
+        logger)
+                
