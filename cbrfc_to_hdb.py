@@ -215,7 +215,7 @@ async def async_post_traces(df_m_write, m_write_hdr, api_url=HDB_API_URL, worker
         ]
         
         result = await asyncio.gather(*futures)
-        return result
+        return [i for i in result if i]
 
 def post_traces(df_m_write, m_write_hdr, api_url=HDB_API_URL):
     failed_posts = []
@@ -263,8 +263,8 @@ def print_and_log(log_str, logger):
     
 if __name__ == '__main__':
     
-    s_time = datetime.now()
     async_run = True
+    s_time = datetime.now()
     this_dir = path.dirname(path.realpath(__file__))
     logger = create_log(path.join(this_dir, 'get_esp.log'))
     cbrfc_dir = path.join(this_dir, 'm_write_jsons')
@@ -325,11 +325,12 @@ if __name__ == '__main__':
             
             frcst_obj = get_frcst_obj(cbrfc_id, frcst_type, mrid_dict)
             frcst_dict[frcst_type][cbrfc_id] = frcst_obj
-        failed_posts = []
+        all_failed_posts = []
         for frcst_type in frcst_dict.keys():
             for site_frcst in frcst_dict[frcst_type].keys():
+                failed_posts = []
                 df_m_write = frcst_dict[frcst_type][site_frcst]
-
+                esp_id = f'{site_frcst}.{frcst_type}'
                 if async_run:
                 ###########################################
                 # testing async multi-threaded application
@@ -339,42 +340,36 @@ if __name__ == '__main__':
                         logger
                     )
                     loop = asyncio.get_event_loop()
-                    async_failed_posts = loop.run_until_complete(
+                    failed_posts = loop.run_until_complete(
                         async_post_traces(df_m_write, m_write_hdr)
-                    )
-                    
-                    failed_posts.append(
-                        {f'{site_frcst}.{frcst_type}': async_failed_posts}
                     )
 
                 else:
                 ##############################################
                 # single threaded syncronous application
                 ##############################################
-                    failed_posts.append(
-                        {
-                            f'{site_frcst}.{frcst_type}':
-                            post_traces(
-                                df_m_write, 
-                                m_write_hdr, 
-                                api_url=HDB_API_URL
-                            )
-                        }
+                    failed_posts = post_traces(
+                        df_m_write, 
+                        m_write_hdr, 
+                        api_url=HDB_API_URL
                     )
                 
-        if not failed_posts:
-            print_and_log('    Success!', logger)
-        else:
-            failed_filename = f'{site_frcst}_failed_posts.json'
+            if not failed_posts:
+                print_and_log('    Success!', logger)
+            else:
+                all_failed_posts.extend(failed_posts)
+                percent_fail = 100 * (len(failed_posts) / df_m_write.size)
+                print_and_log(
+                    f'    {percent_fail:0.0f}% of data failed.', 
+                    logger
+                )
+                
+        if all_failed_posts:
+            failed_filename = f'{cbrfc_id}_failed_posts.json'
             failed_path = path.join('failed_posts', failed_filename)
-            failed_posts = [i for i in failed_posts if i]
             with open(failed_path, 'w') as j:
-                json.dump(failed_posts, j)
-            percent_fail = 100 * (len(failed_posts) / df_m_write.size)
-            print_and_log(
-                f'    {percent_fail:0.0f}% of data failed.', 
-                logger
-            )
+                json.dump(all_failed_posts, j)
+            
     e_time = datetime.now()
     elapsed_sec = (e_time - s_time).seconds
     print_and_log(
