@@ -349,7 +349,6 @@ if __name__ == '__main__':
             print_and_log(f'  Downloading and processing {frcst_type}', logger)
             
             frcst_obj = get_frcst_obj(cbrfc_id, frcst_type, mrid_dict)
-            continue
             frcst_dict[frcst_type][cbrfc_id] = frcst_obj
         all_failed_posts = []
         for frcst_type in frcst_dict.keys():
