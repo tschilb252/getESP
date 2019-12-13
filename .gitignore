@@ -108,7 +108,10 @@ dmypy.json
 .pyre/
 
 # m_write archive used for debuggin only
-/cbrfc_to_hdb
+/m_write_jsons
+
+# failed posts
+/failed_posts
 
 # sub module
 /hdb_api

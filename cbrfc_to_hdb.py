@@ -12,7 +12,7 @@ import pandas as pd
 import numpy as np
 from datetime import date, datetime
 from os import path, makedirs
-import concurrent.futures
+from concurrent.futures import ThreadPoolExecutor
 import logging
 from logging.handlers import TimedRotatingFileHandler
 from requests import post as req_post
@@ -22,10 +22,44 @@ from hdb_api.hdb_utils import get_eng_config, create_hdb_engine
 
 # slots for the following sites need to be created 'NVRN5LOC','GJNC2LOC','GJLOC'
 
-DATA_URL = 'https://www.cbrfc.noaa.gov/outgoing/ucbor'
-HDB_API_URL = 'http://ibr3lcrsrv02.bor.doi.net/series/m-write'
+get_frcst_url():
+    return 'https://www.cbrfc.noaa.gov/outgoing/ucbor'
+
 SITE_MAPPING_URL = f'{DATA_URL}/idmaplist.csv'
 
+def get_api_url():
+    return 'http://ibr3lcrsrv02.bor.doi.net/series/m-write'
+
+def get_m_write_hdr(): 
+    # return {
+    #     'api_hdb': 'uchdb2', 
+    #     'api_user': 'buriona', 
+    #     'api_pass': 'Moki8080'
+    # }
+    return {
+        'api_hdb': 'uchdb2', 
+        'api_user': 'app_remote', 
+        'api_pass': 'UChdb22..'
+    }
+
+def create_log(path='get_esp.log'):
+    logger = logging.getLogger('get_esp rotating log')
+    logger.setLevel(logging.INFO)
+
+    handler = TimedRotatingFileHandler(
+        path,
+        when="W6",
+        backupCount=1
+    )
+
+    logger.addHandler(handler)
+
+    return logger
+
+def print_and_log(log_str, logger):
+    print(log_str)
+    logger.info(log_str)
+    
 def get_mrid_dict():
     with open('mrid_map.json', 'r') as j:
         mrid_dict =json.load(j)
@@ -69,7 +103,7 @@ def parse_m_write(col, sdi, frcst_type, mrid_dict):
                 m_write_dict = dict(
                     model_run_id = mrid,
                     site_datatype_id = int(sdi),
-                    start_date_time = str(row[0]),
+                    start_date_time = row[0].strftime('%Y-%m-%dT00:00:00Z'),
                     value = float(row[1]),
                     interval = interval,
                     do_update_y_or_n = True
@@ -79,9 +113,9 @@ def parse_m_write(col, sdi, frcst_type, mrid_dict):
         m_write_list = [i for i in m_write_list if i]
         return json.dumps(m_write_list)
 
-def get_frcst_obj(cbrfc_id, frcst_type, mrid_dict, frcst_url=DATA_URL, write_json=False):
+def get_frcst_obj(cbrfc_id, frcst_type, mrid_dict, write_json=False):
     filename = f'{cbrfc_id}.{frcst_type}'
-    url = f'{frcst_url}/{filename}.csv'
+    url = f'{get_frcst_url()}/{filename}.csv'
     try:
         if 'espdly' in frcst_type.lower():
             df = pd.read_csv(
@@ -105,7 +139,7 @@ def get_frcst_obj(cbrfc_id, frcst_type, mrid_dict, frcst_url=DATA_URL, write_jso
         df_vol['MOST'] = df_vol_stats['50%']
         df_vol['MAX'] = df_vol_stats['90%']
         df_vol['MIN'] = df_vol_stats['10%']
-
+        
         df_m_write = df_vol.apply(
             lambda col: parse_m_write(col, sdi, frcst_type, mrid_dict)
         )
@@ -163,61 +197,78 @@ def create_esp_mrids():
                 run_name = mrid_names[i]
                 results.append(make_mrid(conn, model_id, run_name))
 
-def chunk_requests(req_list, n=100):
+def chunk_requests(req_list, n=500):
     for i in range(0, len(req_list), n):
         yield req_list[i:i + n]
 
-def post_m_write(m_write):
-    m_write_chunks = chunk_requests(m_write)
-    chunk_codes = []
-    failed_posts = []
-    for chunk in m_write_chunks:
-        m_post = req_post(
-            HDB_API_URL,
-            json=chunk,
-            headers=m_write_hdr
-        )
-        response_code = m_post.status_code
-        chunk_codes.append(response_code)
-        if not response_code == 200:
-            print(f'    {response_code}')
-            failed_posts.append(
-                {f'{idx} {site_frcst}.{frcst_type}': chunk}
-            )
-    if sum(set(chunk_codes)) == 200:
-        print('    Success!')
-    else:
-        fail_codes = [i for i in chunk_codes if not i == 200]
-        percent_fail = 100 * (len(fail_codes) / len(chunk_codes))
-        print(f'    {percent_fail:0.0f}% of data failed')
-    return failed_posts
-
-async def async_post_traces(df_m_write, m_write_hdr, api_url=HDB_API_URL, workers=4):
+def post_chunked_traces(df_m_write, hdb_site_name, frcst_type):
     
-    def post_chunk(json_chunk):
-        result = req_post(api_url, json=json_chunk, headers=m_write_hdr)
+    for idx, row in df_m_write.iterrows():
+        m_write = json.loads(row['m_write'])
+        
+        print_and_log(
+                f'  Writing {hdb_site_name} {idx}-{frcst_type} to HDB.',
+                logger
+            )
+        m_write_chunks = chunk_requests(m_write)
+        chunk_codes = []
+        failed_posts = []
+        for chunk in m_write_chunks:
+            result = req_post(
+                get_api_url(),
+                json=chunk,
+                headers=get_m_write_hdr()
+            )
+            response_code = result.status_code
+            chunk_codes.append(response_code)
+            if not response_code == 200:
+                print(f"   Chunk failed - {result.json()['message']}")
+                failed_posts.append(chunk)
+        if sum(set(chunk_codes)) == 200:
+            print('    Success!')
+        else:
+            fail_codes = [i for i in chunk_codes if not i == 200]
+            percent_fail = 100 * (len(fail_codes) / len(chunk_codes))
+            print(f'    {percent_fail:0.0f}% of data failed')
+        return failed_posts
+
+async def async_post_traces(df_m_write, workers=10):
+    
+    def post_m_year(m_year_dict):
+        m_year = m_year_dict['year']
+        m_data = m_year_dict['data']
+        print_and_log(
+            f"    Writing {m_year}...",
+            logger
+        )
+        result = req_post(
+            get_api_url(), 
+            json=m_data, 
+            headers=get_m_write_hdr()
+        )
         if not result.status_code == 200:
-            return json_chunk
+            print(f" {m_year} failed - {result.json()['message']}")
+            return m_year_dict['data']
     
     m_write_list = []
     for idx, row in df_m_write.iterrows():
-        m_write_list.append(json.loads(row['m_write']))
+        m_write_list.append({'year': idx, 'data': json.loads(row['m_write'])})
         
-    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+    with ThreadPoolExecutor(max_workers=workers) as executor:
         loop = asyncio.get_event_loop()
         futures = [
             loop.run_in_executor(
                 executor, 
-                post_chunk,
-                json_chunk
+                post_m_year,
+                m_year
             )
-            for json_chunk in m_write_list
+            for m_year in m_write_list
         ]
         
         result = await asyncio.gather(*futures)
         return [i for i in result if i]
 
-def post_traces(df_m_write, m_write_hdr, api_url=HDB_API_URL):
+def post_traces(df_m_write, hdb_site_name, frcst_type):
     failed_posts = []
     for idx, row in df_m_write.iterrows():
         m_write = json.loads(row['m_write'])
@@ -226,15 +277,13 @@ def post_traces(df_m_write, m_write_hdr, api_url=HDB_API_URL):
             logger
         )
         m_post = req_post(
-            HDB_API_URL,
+            get_api_url(),
             json=m_write,
-            headers=m_write_hdr
+            headers=get_m_write_hdr()
         )
         response_code = m_post.status_code
         if not response_code == 200:
-            failed_posts.append(
-                {f'{idx} {site_frcst}.{frcst_type}': m_write}
-            )
+            failed_posts.append(m_write)
             print_and_log(
                 f'    Write failed - {response_code}', 
                 logger
@@ -242,24 +291,6 @@ def post_traces(df_m_write, m_write_hdr, api_url=HDB_API_URL):
         else:
             print_and_log('    Success!', logger)
     return failed_posts
-
-def create_log(path='get_esp.log'):
-    logger = logging.getLogger('get_esp rotating log')
-    logger.setLevel(logging.INFO)
-
-    handler = TimedRotatingFileHandler(
-        path,
-        when="W6",
-        backupCount=1
-    )
-
-    logger.addHandler(handler)
-
-    return logger
-
-def print_and_log(log_str, logger):
-    print(log_str)
-    logger.info(log_str)
     
 if __name__ == '__main__':
     
@@ -282,11 +313,7 @@ if __name__ == '__main__':
         hdb,
         did_list=[20, 30]
     ) 
-    m_write_hdr = {
-        'api_hdb': 'uchdb2', 
-        'api_user': 'buriona', 
-        'api_pass': 'Moki8080'
-    }
+    
     mrid_dict = get_mrid_dict()
     
     df_site_map = pd.read_csv(
@@ -324,6 +351,7 @@ if __name__ == '__main__':
             print_and_log(f'  Downloading and processing {frcst_type}', logger)
             
             frcst_obj = get_frcst_obj(cbrfc_id, frcst_type, mrid_dict)
+            continue
             frcst_dict[frcst_type][cbrfc_id] = frcst_obj
         all_failed_posts = []
         for frcst_type in frcst_dict.keys():
@@ -331,7 +359,7 @@ if __name__ == '__main__':
                 failed_posts = []
                 df_m_write = frcst_dict[frcst_type][site_frcst]
                 esp_id = f'{site_frcst}.{frcst_type}'
-                if async_run:
+                if async_run and df_m_write is not None:
                 ###########################################
                 # testing async multi-threaded application
                 ###########################################
@@ -340,19 +368,24 @@ if __name__ == '__main__':
                         logger
                     )
                     loop = asyncio.get_event_loop()
-                    failed_posts = loop.run_until_complete(
-                        async_post_traces(df_m_write, m_write_hdr)
+                    failed_posts.append(
+                        loop.run_until_complete(
+                            async_post_traces(df_m_write)
+                        )
                     )
 
-                else:
+                elif df_m_write is not None:
                 ##############################################
                 # single threaded syncronous application
                 ##############################################
-                    failed_posts = post_traces(
-                        df_m_write, 
-                        m_write_hdr, 
-                        api_url=HDB_API_URL
+                    
+                    failed_posts.append(
+                        post_chunked_traces(df_m_write, hdb_site_name, frcst_type)
                     )
+                        
+                    # failed_posts.append(
+                    #     post_traces(df_m_write, hdb_site_name, frcst_type)
+                    # )
                 
             if not failed_posts:
                 print_and_log('    Success!', logger)
