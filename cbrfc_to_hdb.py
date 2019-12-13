@@ -25,8 +25,6 @@ from hdb_api.hdb_utils import get_eng_config, create_hdb_engine
 def get_frcst_url():
     return 'https://www.cbrfc.noaa.gov/outgoing/ucbor'
 
-SITE_MAPPING_URL = f'{DATA_URL}/idmaplist.csv'
-
 def get_api_url():
     return 'http://ibr3lcrsrv02.bor.doi.net/series/m-write'
 
@@ -315,9 +313,9 @@ if __name__ == '__main__':
     ) 
     
     mrid_dict = get_mrid_dict()
-    
+
     df_site_map = pd.read_csv(
-        SITE_MAPPING_URL,
+        f'{get_frcst_url()}/idmaplist.csv',
         dtype={'CBRFCID': str, 'USGSID': str, 'DESCRIPTION': str})
     
     frcst_dict = {}
