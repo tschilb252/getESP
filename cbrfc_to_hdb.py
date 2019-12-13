@@ -104,7 +104,7 @@ def parse_m_write(col, sdi, frcst_type, mrid_dict):
                     start_date_time = row[0].strftime('%Y-%m-%dT00:00:00Z'),
                     value = float(row[1]),
                     interval = interval,
-                    do_update_y_or_n = True
+                    do_update_y_or_n = False
                 )
                 m_write_list.append(m_write_dict)
     if m_write_list:
@@ -124,12 +124,14 @@ def get_frcst_obj(cbrfc_id, frcst_type, mrid_dict, write_json=False):
             )
             df_vol = df * 1.98347
         else:
-            df_vol = pd.read_csv(
+            df = pd.read_csv(
                 url, 
                 skiprows=2, 
                 parse_dates=['DATE'],
                 index_col = 'DATE'
             )
+            df_vol = df * 1000.0
+            
         df_vol.dropna(how='all', inplace=True)
         df_vol_stats = df_vol.transpose()
         df_vol_stats = df_vol_stats.describe(percentiles=[0.10, 0.50, 0.90])
@@ -365,7 +367,7 @@ if __name__ == '__main__':
                         logger
                     )
                     loop = asyncio.get_event_loop()
-                    failed_posts.append(
+                    failed_posts.extend(
                         loop.run_until_complete(
                             async_post_traces(df_m_write)
                         )
@@ -376,7 +378,7 @@ if __name__ == '__main__':
                 # single threaded syncronous application
                 ##############################################
                     
-                    failed_posts.append(
+                    failed_posts.extend(
                         post_chunked_traces(df_m_write, hdb_site_name, frcst_type)
                     )
                         
