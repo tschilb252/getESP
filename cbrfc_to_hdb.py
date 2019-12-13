@@ -22,7 +22,7 @@ from hdb_api.hdb_utils import get_eng_config, create_hdb_engine
 
 # slots for the following sites need to be created 'NVRN5LOC','GJNC2LOC','GJLOC'
 
-get_frcst_url():
+def get_frcst_url():
     return 'https://www.cbrfc.noaa.gov/outgoing/ucbor'
 
 SITE_MAPPING_URL = f'{DATA_URL}/idmaplist.csv'
