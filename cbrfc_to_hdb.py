@@ -356,7 +356,7 @@ if __name__ == '__main__':
     async_run = True
     s_time = datetime.now()
     this_dir = path.dirname(path.realpath(__file__))  
-    logger = create_log(path.join(this_dir, 'get_esp.log'))
+    logger = create_log(path.join(this_dir, 'logs', 'get_esp.log'))
     cbrfc_dir = path.join(this_dir, 'm_write_jsons')
     makedirs(cbrfc_dir, exist_ok=True)
     failed_post_dir = path.join(this_dir, 'failed_posts')

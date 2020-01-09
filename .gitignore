@@ -117,4 +117,5 @@ dmypy.json
 /hdb_api
 
 # log files
+/logs
 *.log
