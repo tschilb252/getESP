@@ -11,7 +11,7 @@ import asyncio
 import pandas as pd
 import numpy as np
 from datetime import date, datetime
-from os import path, makedirs
+from os import path, makedirs, listdir, remove
 from concurrent.futures import ThreadPoolExecutor
 import logging
 from logging.handlers import TimedRotatingFileHandler
@@ -291,18 +291,77 @@ def post_traces(df_m_write, hdb_site_name, frcst_type):
         else:
             print_and_log('    Success!', logger)
     return failed_posts
-    
+
+def clean_up(logger, failed_file_dir='failed_posts'):
+    failed_post_files = listdir(failed_file_dir)
+    failed_post_files[:] = [path.join(failed_file_dir, i) for i in failed_post_files]
+    for failed_post_file in failed_post_files:
+        print_and_log(
+            f'Attemping to write failed data from - {failed_post_file}.', 
+            logger
+        )
+        with open(failed_post_file, 'r') as j:
+            failed_posts = json.load(j)
+        failed_again = []
+        for failed_post in failed_posts:
+            result = req_post(
+                get_api_url(),
+                json=failed_post,
+                headers=get_m_write_hdr()
+            )
+            if not result.status_code == 200:
+                failed_again.append(failed_post)
+        if not failed_again:
+            print_and_log(
+                f'  Success! - {failed_post_file} written to HDB.', 
+                logger
+            )
+            remove(failed_post_file)
+        else:
+            print_and_log(
+                f'  Error! - {failed_post_file} failed to write HDB - '
+                f"{result.json()['message']}",
+                logger
+            )
+ 
 if __name__ == '__main__':
     
+    import argparse
+    cli_desc = '''
+    Downloads CBRFC ESP Traces and pushes data to UCHDB, 
+    defaults to both raw and adjusted datasets.
+    '''
+    parser = argparse.ArgumentParser(description=cli_desc)
+    parser.add_argument("-V", "--version", help="show program version", action="store_true")
+    parser.add_argument("-r", "--raw", help="only write raw ESP data", action="store_true")
+    parser.add_argument("-a", "--adj", help="only write adjusted ESP data", action="store_true")
+    parser.add_argument("-m", "--mapfile", help="print mrid mapping", action="store_true")
+    parser.add_argument("-f", "--file", help="export mrid mapping to provided filepath")
+    args = parser.parse_args()
+    
+    if args.version:
+        print('cbrfc_to_hdb.py v1.0')
+    if args.mapfile:
+        print(json.dumps(get_mrid_dict(), sort_keys=True, indent=4))
+        sys.exit(0)
+    if args.file:
+        if path.isdir(args.file):
+            with open(path.join(args.file, 'mrid_esp_map.json'), 'w') as f:
+                json.dump(get_mrid_dict(), f, sort_keys=True, indent=4)
+                print(f'mrid_esp_map.json exported to {args.file}')
+        else:
+            print(f'{args.file} does not exist.')
+        sys.exit(0)
+        
     async_run = True
     s_time = datetime.now()
-    this_dir = path.dirname(path.realpath(__file__))
+    this_dir = path.dirname(path.realpath(__file__))  
     logger = create_log(path.join(this_dir, 'get_esp.log'))
     cbrfc_dir = path.join(this_dir, 'm_write_jsons')
     makedirs(cbrfc_dir, exist_ok=True)
     failed_post_dir = path.join(this_dir, 'failed_posts')
     makedirs(failed_post_dir, exist_ok=True)
-    
+
     print_and_log(f'ESP fetch starting at {s_time.strftime("%x %X")}...', logger)
     config = get_eng_config(db='uc')
     hdb = Hdb(config)
@@ -315,17 +374,23 @@ if __name__ == '__main__':
     ) 
     
     mrid_dict = get_mrid_dict()
-
+        
     df_site_map = pd.read_csv(
         f'{get_frcst_url()}/idmaplist.csv',
         dtype={'CBRFCID': str, 'USGSID': str, 'DESCRIPTION': str})
     
     frcst_dict = {}
-    daily_5yr = get_frcst_type(period=5)
-    daily_1yr = get_frcst_type(period=1)
-    mnthly_raw = get_frcst_type(interval='monthly')
+    daily_adj = get_frcst_type(period=5)
+    daily_raw = get_frcst_type(period=1)
     mnthly_adj = get_frcst_type(interval='monthly', adj=True)
-    frcst_types = [daily_5yr, daily_1yr, mnthly_raw, mnthly_adj]
+    mnthly_raw = get_frcst_type(interval='monthly')
+    frcst_types = []
+    if args.raw:
+        frcst_types = [daily_raw, mnthly_raw]
+    if args.adj:
+        frcst_types = [daily_adj, mnthly_adj]
+    if not args.raw and not args.adj:
+        frcst_types = [daily_adj, mnthly_adj, daily_raw, mnthly_raw]
         
     for idx, row in df_site_map.iterrows():
         for frcst_type in frcst_types:
@@ -408,4 +473,5 @@ if __name__ == '__main__':
         f'ESP fetch finished at {e_time.strftime("%x %X")}...'
         f'Total elapsed time {elapsed_sec / 3600:0.2f} hours. ',
         logger)
+    clean_up(logger, failed_post_dir)
                 
