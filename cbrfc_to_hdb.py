@@ -28,16 +28,11 @@ def get_frcst_url():
 def get_api_url():
     return 'http://ibr3lcrsrv02.bor.doi.net/series/m-write'
 
-def get_m_write_hdr(): 
-    # return {
-    #     'api_hdb': 'uchdb2', 
-    #     'api_user': 'buriona', 
-    #     'api_pass': 'Moki8080'
-    # }
+def get_m_write_hdr(hdb_config): 
     return {
-        'api_hdb': 'uchdb2', 
-        'api_user': 'app_remote', 
-        'api_pass': 'UChdb22..'
+        'api_hdb': hdb_config['database'], 
+        'api_user': hdb_config['username'], 
+        'api_pass': hdb_config['psswrd']
     }
 
 def create_log(path='get_esp.log'):
@@ -217,7 +212,7 @@ def post_chunked_traces(df_m_write, hdb_site_name, frcst_type):
             result = req_post(
                 get_api_url(),
                 json=chunk,
-                headers=get_m_write_hdr()
+                headers=get_m_write_hdr(config)
             )
             response_code = result.status_code
             chunk_codes.append(response_code)
@@ -244,7 +239,7 @@ async def async_post_traces(df_m_write, workers=10):
         result = req_post(
             get_api_url(), 
             json=m_data, 
-            headers=get_m_write_hdr()
+            headers=get_m_write_hdr(config)
         )
         if not result.status_code == 200:
             print(f" {m_year} failed - {result.json()['message']}")
@@ -279,7 +274,7 @@ def post_traces(df_m_write, hdb_site_name, frcst_type):
         m_post = req_post(
             get_api_url(),
             json=m_write,
-            headers=get_m_write_hdr()
+            headers=get_m_write_hdr(config)
         )
         response_code = m_post.status_code
         if not response_code == 200:
@@ -307,7 +302,7 @@ def clean_up(logger, failed_file_dir='failed_posts'):
             result = req_post(
                 get_api_url(),
                 json=failed_post,
-                headers=get_m_write_hdr()
+                headers=get_m_write_hdr(config)
             )
             if not result.status_code == 200:
                 failed_again.append(failed_post)
