@@ -318,7 +318,8 @@ def clean_up(logger, failed_file_dir='failed_posts'):
                 f"{result.json()['message']}",
                 logger
             )
- 
+            remove(failed_post_file)
+            
 if __name__ == '__main__':
     
     import argparse
