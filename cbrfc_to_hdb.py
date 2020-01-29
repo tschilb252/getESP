@@ -28,19 +28,19 @@ def get_frcst_url():
 def get_api_url():
     return 'http://ibr3lcrsrv02.bor.doi.net/series/m-write'
 
-def get_m_write_hdr(hdb_config): 
+def get_write_hdr(hdb_config): 
     return {
         'api_hdb': hdb_config['database'], 
         'api_user': hdb_config['username'], 
         'api_pass': hdb_config['psswrd']
     }
 
-def create_log(path='get_esp.log'):
+def create_log(log_path='get_esp.log'):
     logger = logging.getLogger('get_esp rotating log')
     logger.setLevel(logging.INFO)
 
     handler = TimedRotatingFileHandler(
-        path,
+        log_path,
         when="W6",
         backupCount=1
     )
@@ -99,7 +99,7 @@ def parse_m_write(col, sdi, frcst_type, mrid_dict):
                     start_date_time = row[0].strftime('%Y-%m-%dT00:00:00Z'),
                     value = float(row[1]),
                     interval = interval,
-                    do_update_y_or_n = False
+                    do_update_y_or_n = True
                 )
                 m_write_list.append(m_write_dict)
     if m_write_list:
@@ -212,7 +212,7 @@ def post_chunked_traces(df_m_write, hdb_site_name, frcst_type):
             result = req_post(
                 get_api_url(),
                 json=chunk,
-                headers=get_m_write_hdr(config)
+                headers=get_write_hdr(config)
             )
             response_code = result.status_code
             chunk_codes.append(response_code)
@@ -239,7 +239,7 @@ async def async_post_traces(df_m_write, workers=10):
         result = req_post(
             get_api_url(), 
             json=m_data, 
-            headers=get_m_write_hdr(config)
+            headers=get_write_hdr(config)
         )
         if not result.status_code == 200:
             print(f" {m_year} failed - {result.json()['message']}")
@@ -274,7 +274,7 @@ def post_traces(df_m_write, hdb_site_name, frcst_type):
         m_post = req_post(
             get_api_url(),
             json=m_write,
-            headers=get_m_write_hdr(config)
+            headers=get_write_hdr(config)
         )
         response_code = m_post.status_code
         if not response_code == 200:
@@ -302,7 +302,7 @@ def clean_up(logger, failed_file_dir='failed_posts'):
             result = req_post(
                 get_api_url(),
                 json=failed_post,
-                headers=get_m_write_hdr(config)
+                headers=get_write_hdr(config)
             )
             if not result.status_code == 200:
                 failed_again.append(failed_post)
