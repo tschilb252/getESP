@@ -4,7 +4,7 @@ Created on Mon Nov  4 08:49:17 2019
 
 @author: buriona
 """
-
+import datetime
 import sys
 import json
 import asyncio
@@ -15,7 +15,7 @@ from os import path, makedirs, listdir, remove
 from concurrent.futures import ThreadPoolExecutor
 import logging
 from logging.handlers import TimedRotatingFileHandler
-from requests import post as req_post
+from requests import delete as req_post
 from urllib.request import HTTPError
 from hdb_api.hdb_api import Hdb, HdbTables, HdbTimeSeries
 from hdb_api.hdb_utils import get_eng_config, create_hdb_engine
@@ -26,7 +26,7 @@ def get_frcst_url():
     return 'https://www.cbrfc.noaa.gov/outgoing/ucbor'
 
 def get_api_url():
-    return 'http://ibr3lcrsrv02.bor.doi.net/series/m-write'
+    return 'http://ibr3lcrsrv02.bor.doi.net/series/m-delete'
 
 
 def get_write_hdr(hdb_config): 
@@ -90,21 +90,30 @@ def parse_m_write(col, sdi, frcst_type, mrid_dict):
     m_write_list = []
     mrid = get_mrid(col.name, frcst_type, mrid_dict)
     interval = get_interval(frcst_type)
+    freq = 'M'
+    periods = 40
+    if get_interval(frcst_type) == 'day':
+        freq = 'D'
+        periods = 366 + 80
+        if '1yr' in frcst_type:
+            periods = 366 * 5 + 31
+    s_date = datetime(2019, 10, 1)
+    index = pd.date_range(s_date, periods=periods, freq=freq)
+    df = pd.DataFrame(index=index, columns=['a'])
+    col = df['a']
     if mrid and interval:
         for row in col.items():
-            val = float(row[1])
-            if not np.isnan(val):
-                m_write_dict = dict(
-                    model_run_id = mrid,
-                    site_datatype_id = int(sdi),
-                    start_date_time = row[0].strftime('%Y-%m-%dT00:00:00Z'),
-                    value = float(row[1]),
-                    interval = interval,
-                    do_update_y_or_n = False
-                )
+            m_write_dict = dict(
+                model_run_id = mrid,
+                site_datatype_id = int(sdi),
+                start_date_time = row[0].strftime('%Y-%m-%dT00:00:00Z'),
+                value = 0,
+                interval = interval,
+                do_update_y_or_n = True
+            )
+            if m_write_dict:
                 m_write_list.append(m_write_dict)
     if m_write_list:
-        m_write_list = [i for i in m_write_list if i]
         return json.dumps(m_write_list)
 
 def get_frcst_obj(cbrfc_id, frcst_type, mrid_dict, write_json=False):
@@ -118,7 +127,7 @@ def get_frcst_obj(cbrfc_id, frcst_type, mrid_dict, write_json=False):
                 parse_dates=['DATE'],
                 index_col = 'DATE'
             )
-            # df = df * 1.983471
+            df = df * 1.983471
         else:
             df_vol = pd.read_csv(
                 url, 
@@ -126,8 +135,8 @@ def get_frcst_obj(cbrfc_id, frcst_type, mrid_dict, write_json=False):
                 parse_dates=['DATE'],
                 index_col = 'DATE'
             )
-            # df = df_vol * 1000.0
-            df = (df_vol * 1000.0) / 1.983471
+            df = df_vol * 1000.0
+            # df = (df_vol * 1000.0) / 1.983471
             
         df.dropna(how='all', inplace=True)
         df_stats = df.transpose()
@@ -235,7 +244,7 @@ async def async_post_traces(df_m_write, workers=10):
         m_year = m_year_dict['year']
         m_data = m_year_dict['data']
         print_and_log(
-            f"    Writing {m_year}...",
+            f"    Deleting {m_year}...",
             logger
         )
         result = req_post(
@@ -373,11 +382,11 @@ if __name__ == '__main__':
     workers = 10
     if args.workers:
         if str(args.workers).isnumeric():
-            workers = int(args.workers)
+            workers = int(args.workers)     
     async_run = True
     if args.single:
         async_run = False
-    
+        
     s_time = datetime.now()
     this_dir = path.dirname(path.realpath(__file__)) 
     log_dir = path.join(this_dir, 'logs')
@@ -387,18 +396,18 @@ if __name__ == '__main__':
     makedirs(cbrfc_dir, exist_ok=True)
     failed_post_dir = path.join(this_dir, 'failed_posts')
     makedirs(failed_post_dir, exist_ok=True)
-
+    
     print_and_log(f'ESP fetch starting at {s_time.strftime("%x %X")}...', logger)
-    config = get_eng_config(db='uc')
+    config = get_eng_config(db='uc_dba')
     hdb = Hdb(config)
     tbls = HdbTables
     ts = HdbTimeSeries
-    
+
     site_datatypes = tbls.sitedatatypes(
         hdb,
-        # did_list=[20, 30, 32, 34, 124] # volumes
-        did_list=[19, 29, 31, 33, 123] # flows
-        # sdi_list=[23408, 1849, 1848, 1847, 1786] #aspinal sdis
+        did_list=[34]
+        # did_list=[20, 30, 32, 34, 123] #volumes
+        # did_list=[19, 29, 31, 33]
     )
     site_datatypes.sort_values(
         by=['datatype_id'], ascending=False, inplace=True
@@ -425,7 +434,7 @@ if __name__ == '__main__':
         frcst_types = [daily_adj, mnthly_adj]
     if not args.raw and not args.adj:
         frcst_types = [daily_adj, mnthly_adj, daily_raw, mnthly_raw]
-        
+
     for idx, row in df_site_map.iterrows():
         for frcst_type in frcst_types:
             frcst_dict[frcst_type] = {}
@@ -435,9 +444,8 @@ if __name__ == '__main__':
         sdi = None
         meta_row = None
         if usgs_id:
-            
             meta_row = site_datatypes[site_datatypes['site_metadata.nws_code'] == cbrfc_id]
-            if not meta_row.empty:
+            if not meta_row.empty and 'navajo' in site_name.lower():
                 datatype_name = meta_row['datatype_metadata.datatype_name'].iloc[0].upper()
                 sdi = meta_row['site_datatype_id'].iloc[0]
                 hdb_site_name = meta_row['site_metadata.site_name'].iloc[0].upper()
@@ -455,6 +463,7 @@ if __name__ == '__main__':
             frcst_dict[frcst_type][cbrfc_id] = frcst_obj
         all_failed_posts = []
 
+
         for frcst_type in frcst_dict.keys():
             for site_frcst in frcst_dict[frcst_type].keys():
                 failed_posts = []
@@ -462,10 +471,9 @@ if __name__ == '__main__':
                 esp_id = f'{site_frcst}.{frcst_type}'
                 if async_run and df_m_write is not None:
                 ###########################################
-                # async multi-threaded application
+                # testing async multi-threaded application
                 ###########################################
                     print_and_log(
-                        # f'z#{sdi}#{hdb_site_name}#{meta_row["site_metadata.site_id"].iloc[0]}#{datatype_name}#{meta_row["datatype_metadata.datatype_id"].iloc[0]}#{frcst_type}#{esp_id}'
                         f'  Writing {hdb_site_name} {datatype_name} {frcst_type} to HDB.', 
                         logger
                     )
@@ -484,6 +492,10 @@ if __name__ == '__main__':
                     failed_posts.extend(
                         post_chunked_traces(df_m_write, hdb_site_name, frcst_type)
                     )
+                        
+                    # failed_posts.append(
+                    #     post_traces(df_m_write, hdb_site_name, frcst_type)
+                    # )
                 
             if not failed_posts:
                 print_and_log('    Success!', logger)
@@ -507,5 +519,5 @@ if __name__ == '__main__':
         f'ESP fetch finished at {e_time.strftime("%x %X")}...'
         f'Total elapsed time {elapsed_sec / 3600:0.2f} hours. ',
         logger)
-    clean_up(logger, failed_post_dir)
+    # clean_up(logger, failed_post_dir)
                 
