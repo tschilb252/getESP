@@ -421,7 +421,7 @@ if __name__ == '__main__':
     df_site_map = pd.read_csv(
         f'{get_frcst_url()}/idmaplist.csv',
         dtype={'CBRFCID': str, 'USGSID': str, 'DESCRIPTION': str})
-    
+
     frcst_dict = {}
     daily_adj = get_frcst_type(period=5)
     daily_raw = get_frcst_type(period=1)
@@ -477,12 +477,12 @@ if __name__ == '__main__':
                         f'  Writing {hdb_site_name} {datatype_name} {frcst_type} to HDB.', 
                         logger
                     )
-                    loop = asyncio.get_event_loop()
-                    failed_posts.extend(
-                        loop.run_until_complete(
-                            async_post_traces(df_m_write, workers)
-                        )
-                    )
+                    # loop = asyncio.get_event_loop()
+                    # failed_posts.extend(
+                    #     loop.run_until_complete(
+                    #         async_post_traces(df_m_write, workers)
+                    #     )
+                    # )
 
                 elif df_m_write is not None:
                 ##############################################

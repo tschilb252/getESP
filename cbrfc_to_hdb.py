@@ -22,8 +22,19 @@ from hdb_api.hdb_utils import get_eng_config, create_hdb_engine
 
 # slots for the following sites need to be created 'NVRN5LOC','GJNC2LOC','GJLOC'
 
-def get_frcst_url():
-    return 'https://www.cbrfc.noaa.gov/outgoing/ucbor'
+def get_frcst_url(office='uc'):
+    frcst_url_dict ={
+        'uc': 'https://www.cbrfc.noaa.gov/outgoing/ucbor',
+        'alb': 'https://www.cbrfc.noaa.gov/outgoing/abqbor'
+    }
+    return frcst_url_dict[office]
+
+def get_nws_region(office='uc'):
+    nws_region_dict ={
+        'uc': 'CB',
+        'alb': 'WG'
+    }
+    return nws_region_dict[office]
 
 def get_api_url():
     return 'http://ibr3lcrsrv02.bor.doi.net/series/m-write'
@@ -107,9 +118,9 @@ def parse_m_write(col, sdi, frcst_type, mrid_dict):
         m_write_list = [i for i in m_write_list if i]
         return json.dumps(m_write_list)
 
-def get_frcst_obj(cbrfc_id, frcst_type, mrid_dict, write_json=False):
-    filename = f'{cbrfc_id}.{frcst_type}'
-    url = f'{get_frcst_url()}/{filename}.csv'
+def get_frcst_obj(rfc_id, frcst_type, mrid_dict, office='uc', write_json=False):
+    filename = f'{rfc_id}.{frcst_type}'
+    url = f'{get_frcst_url(office)}/{filename}.csv'
     try:
         if 'espdly' in frcst_type.lower():
             df = pd.read_csv(
@@ -155,7 +166,7 @@ def get_frcst_obj(cbrfc_id, frcst_type, mrid_dict, write_json=False):
     
     except HTTPError:
         print(
-            f"    Skipping {row['CBRFCID']}.{frcst_type}, file not found - "
+            f"    Skipping {rfc_id}.{frcst_type}, file not found - "
             f"{url}"
         )
 
@@ -198,7 +209,7 @@ def chunk_requests(req_list, n=500):
     for i in range(0, len(req_list), n):
         yield req_list[i:i + n]
 
-def post_chunked_traces(df_m_write, hdb_site_name, frcst_type):
+def post_chunked_traces(df_m_write, hdb_site_name, frcst_type, logger):
     
     for idx, row in df_m_write.iterrows():
         m_write = json.loads(row['m_write'])
@@ -219,17 +230,20 @@ def post_chunked_traces(df_m_write, hdb_site_name, frcst_type):
             response_code = result.status_code
             chunk_codes.append(response_code)
             if not response_code == 200:
-                print(f"   Chunk failed - {result.json()['message']}")
+                print_and_log(
+                    f"   Chunk failed - {result.json()['message']}",
+                    logger
+                )
                 failed_posts.append(chunk)
         if sum(set(chunk_codes)) == 200:
-            print('    Success!')
+            print_and_log('    Success!')
         else:
             fail_codes = [i for i in chunk_codes if not i == 200]
             percent_fail = 100 * (len(fail_codes) / len(chunk_codes))
-            print(f'    {percent_fail:0.0f}% of data failed')
+            print_and_log(f'    {percent_fail:0.0f}% of data failed', logger)
         return failed_posts
 
-async def async_post_traces(df_m_write, workers=10):
+async def async_post_traces(df_m_write, logger, workers=10):
     
     def post_m_year(m_year_dict):
         m_year = m_year_dict['year']
@@ -244,7 +258,7 @@ async def async_post_traces(df_m_write, workers=10):
             headers=get_write_hdr(config)
         )
         if not result.status_code == 200:
-            print(f" {m_year} failed - {result.json()['message']}")
+            print_and_log(f" {m_year} failed - {result.json()['message']}")
             return m_year_dict['data']
     
     m_write_list = []
@@ -282,7 +296,8 @@ def post_traces(df_m_write, hdb_site_name, frcst_type):
         if not response_code == 200:
             failed_posts.append(m_write)
             print_and_log(
-                f'    Write failed - {response_code}', 
+                f'    Write failed - {response_code} - '
+                f'{m_post.json()["message"]}', 
                 logger
             )
         else:
@@ -321,12 +336,37 @@ def clean_up(logger, failed_file_dir='failed_posts'):
                 logger
             )
             remove(failed_post_file)
-            
+
+def get_frcst_types(args): #dear god this is ugly clean up with dicts
+    frcst_types = []
+    if args.raw:
+        if args.daily:
+            frcst_types = [daily_raw]
+        elif args.monthly:
+            frcst_types = [mnthly_raw]
+        else:
+            frcst_types = [daily_raw, mnthly_raw]
+    if args.adj:
+        if args.daily:
+            frcst_types = [daily_adj]
+        elif args.monthly:
+            frcst_types = [mnthly_adj]
+        else:
+            frcst_types = [daily_adj, mnthly_adj]
+    if not args.raw and not args.adj:
+        if args.daily:
+            frcst_types = [daily_adj, daily_raw]
+        elif args.monthly:
+            frcst_types = [mnthly_adj, mnthly_raw]
+        else:
+            frcst_types = [daily_adj, mnthly_adj, daily_raw, mnthly_raw]
+        
+    return frcst_types
 if __name__ == '__main__':
     
     import argparse
     cli_desc = '''
-    Downloads CBRFC ESP Traces and pushes data to UCHDB, 
+    Downloads RFC ESP Traces and pushes data to UCHDB, 
     defaults to both raw and adjusted datasets.
     '''
     parser = argparse.ArgumentParser(description=cli_desc)
@@ -340,10 +380,19 @@ if __name__ == '__main__':
         "-a", "--adj", help="only write adjusted ESP data", action="store_true"
     )
     parser.add_argument(
-        "-m", "--mapfile", help="print mrid mapping", action="store_true"
+        "-d", "--daily", help="only write daily ESP data", action="store_true"
+    )
+    parser.add_argument(
+        "-m", "--monthly", help="only write daily ESP data", action="store_true"
+    )
+    parser.add_argument(
+        "-p", "--print", help="print mrid mapping", action="store_true"
     )
     parser.add_argument(
         "-f", "--file", help="export mrid mapping to provided filepath"
+    )
+    parser.add_argument(
+        "-o", "--office", help="pick between 'uc' or 'alb' office", default='uc'
     )
     parser.add_argument(
         "-w", "--workers", help="number of threads to use in async write"
@@ -358,8 +407,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
     
     if args.version:
-        print('cbrfc_to_hdb.py v1.0')
-    if args.mapfile:
+        print('rfc_to_hdb.py v1.0')
+    if args.print:
         print(json.dumps(get_mrid_dict(), sort_keys=True, indent=4))
         sys.exit(0)
     if args.file:
@@ -377,18 +426,24 @@ if __name__ == '__main__':
     async_run = True
     if args.single:
         async_run = False
+    if args.office:
+        office = args.office
+    nws_region = get_nws_region(office)   
     
     s_time = datetime.now()
     this_dir = path.dirname(path.realpath(__file__)) 
     log_dir = path.join(this_dir, 'logs')
     makedirs(log_dir, exist_ok=True)
-    logger = create_log(path.join(this_dir, 'logs', 'get_esp.log'))
-    cbrfc_dir = path.join(this_dir, 'm_write_jsons')
-    makedirs(cbrfc_dir, exist_ok=True)
+    logger = create_log(path.join(this_dir, 'logs', f'{office}_get_esp.log'))
+    rfc_dir = path.join(this_dir, 'm_write_jsons')
+    makedirs(rfc_dir, exist_ok=True)
     failed_post_dir = path.join(this_dir, 'failed_posts')
     makedirs(failed_post_dir, exist_ok=True)
 
-    print_and_log(f'ESP fetch starting at {s_time.strftime("%x %X")}...', logger)
+    print_and_log(
+        f'{office.upper()} ESP fetch starting at {s_time.strftime("%x %X")}...', 
+        logger
+    )
     config = get_eng_config(db='uc')
     hdb = Hdb(config)
     tbls = HdbTables
@@ -408,51 +463,56 @@ if __name__ == '__main__':
     )
 
     mrid_dict = get_mrid_dict()
-
+    frcst_url = get_frcst_url(office)
+    site_map_url = f'{frcst_url}/idmaplist.csv'
     df_site_map = pd.read_csv(
-        f'{get_frcst_url()}/idmaplist.csv',
-        dtype={'CBRFCID': str, 'USGSID': str, 'DESCRIPTION': str})
+        site_map_url,
+        dtype={f'{nws_region}RFCID': str, 'USGSID': str, 'DESCRIPTION': str})
     
     frcst_dict = {}
     daily_adj = get_frcst_type(period=5)
     daily_raw = get_frcst_type(period=1)
     mnthly_adj = get_frcst_type(interval='monthly', adj=True)
     mnthly_raw = get_frcst_type(interval='monthly')
-    frcst_types = []
-    if args.raw:
-        frcst_types = [daily_raw, mnthly_raw]
-    if args.adj:
-        frcst_types = [daily_adj, mnthly_adj]
-    if not args.raw and not args.adj:
-        frcst_types = [daily_adj, mnthly_adj, daily_raw, mnthly_raw]
-        
+    frcst_types = get_frcst_types(args)
+    
     for idx, row in df_site_map.iterrows():
         for frcst_type in frcst_types:
             frcst_dict[frcst_type] = {}
         site_name = row['DESCRIPTION']
-        cbrfc_id = row['CBRFCID']
+        rfc_id = row[f'{nws_region}RFCID']
         usgs_id = str(row['USGSID'])
         sdi = None
         meta_row = None
         if usgs_id:
             
-            meta_row = site_datatypes[site_datatypes['site_metadata.nws_code'] == cbrfc_id]
+            meta_row = site_datatypes[site_datatypes['site_metadata.nws_code'] == rfc_id]
             if not meta_row.empty:
                 datatype_name = meta_row['datatype_metadata.datatype_name'].iloc[0].upper()
                 sdi = meta_row['site_datatype_id'].iloc[0]
                 hdb_site_name = meta_row['site_metadata.site_name'].iloc[0].upper()
                 print(site_name, datatype_name)
             else:
+                print_and_log(
+                    f'Could not match {rfc_id} - {site_name} to an HDB site',
+                    logger
+                )
                 continue
         
         print_and_log(f"Getting ESP data for {hdb_site_name}", logger)
         
         for frcst_type in frcst_types:
             
-            print_and_log(f'  Downloading and processing {frcst_type}', logger)
+            print_and_log(
+                f'  Downloading and processing {frcst_type}', 
+                logger
+            )
             
-            frcst_obj = get_frcst_obj(cbrfc_id, frcst_type, mrid_dict)
-            frcst_dict[frcst_type][cbrfc_id] = frcst_obj
+            frcst_obj = get_frcst_obj(
+                rfc_id, frcst_type, mrid_dict, office=office
+            )
+            frcst_dict[frcst_type][rfc_id] = frcst_obj
+            
         all_failed_posts = []
 
         for frcst_type in frcst_dict.keys():
@@ -465,14 +525,15 @@ if __name__ == '__main__':
                 # async multi-threaded application
                 ###########################################
                     print_and_log(
-                        # f'z#{sdi}#{hdb_site_name}#{meta_row["site_metadata.site_id"].iloc[0]}#{datatype_name}#{meta_row["datatype_metadata.datatype_id"].iloc[0]}#{frcst_type}#{esp_id}'
                         f'  Writing {hdb_site_name} {datatype_name} {frcst_type} to HDB.', 
                         logger
                     )
                     loop = asyncio.get_event_loop()
                     failed_posts.extend(
                         loop.run_until_complete(
-                            async_post_traces(df_m_write, workers)
+                            async_post_traces(
+                                df_m_write, logger, workers=workers
+                            )
                         )
                     )
 
@@ -482,7 +543,9 @@ if __name__ == '__main__':
                 ##############################################
                     
                     failed_posts.extend(
-                        post_chunked_traces(df_m_write, hdb_site_name, frcst_type)
+                        post_chunked_traces(
+                            df_m_write, hdb_site_name, frcst_type, logger
+                        )
                     )
                 
             if not failed_posts:
@@ -496,7 +559,7 @@ if __name__ == '__main__':
                 )
                 
         if all_failed_posts:
-            failed_filename = f'{cbrfc_id}_failed_posts.json'
+            failed_filename = f'{rfc_id}_failed_posts.json'
             failed_path = path.join('failed_posts', failed_filename)
             with open(failed_path, 'w') as j:
                 json.dump(all_failed_posts, j)
