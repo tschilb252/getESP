@@ -61,9 +61,10 @@ def create_log(log_path='get_esp.log'):
 
     return logger
 
-def print_and_log(log_str, logger):
+def print_and_log(log_str, logger=None):
     print(log_str)
-    logger.info(log_str)
+    if logger:
+        logger.info(log_str)
     
 def get_mrid_dict():
     with open('mrid_map.json', 'r') as j:
@@ -170,7 +171,7 @@ def get_frcst_obj(rfc_id, frcst_type, mrid_dict, office='uc', write_json=False):
             f"{url}"
         )
 
-def make_eng(db='buriona_uc'):
+def make_eng(db='uc'):
     db_config = get_eng_config(db=db)
     eng = create_hdb_engine(**db_config)
     return eng
@@ -189,13 +190,12 @@ def make_mrid(conn, model_id, run_name):
         print(f'{run_name} mrid created')
         return result
     except Exception as e:
-        print(f'Failed! - {e}')
         return f'Failed! - {e}'
 
 def create_esp_mrids():
     results = []
     model_ids = {53: 'RAW', 52: 'ADJ'}
-    eng = make_eng(db='buriona_uc')
+    eng = make_eng(db='uc')
     with eng.connect() as conn:
         for model_id, data_type in model_ids.items():
             esp_traces = [str(i) for i in range(1981, 2016)]
@@ -236,7 +236,7 @@ def post_chunked_traces(df_m_write, hdb_site_name, frcst_type, logger):
                 )
                 failed_posts.append(chunk)
         if sum(set(chunk_codes)) == 200:
-            print_and_log('    Success!')
+            print_and_log('    Success!', logger)
         else:
             fail_codes = [i for i in chunk_codes if not i == 200]
             percent_fail = 100 * (len(fail_codes) / len(chunk_codes))
@@ -258,7 +258,9 @@ async def async_post_traces(df_m_write, logger, workers=10):
             headers=get_write_hdr(config)
         )
         if not result.status_code == 200:
-            print_and_log(f" {m_year} failed - {result.json()['message']}")
+            print_and_log(
+                f" {m_year} failed - {result.json()['message']}",
+                logger)
             return m_year_dict['data']
     
     m_write_list = []
