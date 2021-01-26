@@ -20,6 +20,8 @@ from urllib.request import HTTPError
 from hdb_api.hdb_api import Hdb, HdbTables, HdbTimeSeries
 from hdb_api.hdb_utils import get_eng_config, create_hdb_engine
 
+DEFAULT_WORKERS = 10
+
 # slots for the following sites need to be created 'NVRN5LOC','GJNC2LOC','GJLOC'
 
 def get_frcst_url(office='uc'):
@@ -36,7 +38,9 @@ def get_nws_region(office='uc'):
     }
     return nws_region_dict[office]
 
-def get_api_url():
+def get_api_url(server='uc'):
+    if server == 'uc':
+        return 'http://ibr4ucrap020.bor.doi.net/series/m-write'
     return 'http://ibr3lcrsrv02.bor.doi.net/series/m-write'
 
 
@@ -306,7 +310,7 @@ def post_traces(df_m_write, hdb_site_name, frcst_type):
             print_and_log('    Success!', logger)
     return failed_posts
 
-def clean_up(logger, failed_file_dir='failed_posts'):
+def clean_up(logger=None, failed_file_dir='failed_posts'):
     failed_post_files = listdir(failed_file_dir)
     failed_post_files[:] = [path.join(failed_file_dir, i) for i in failed_post_files]
     for failed_post_file in failed_post_files:
@@ -385,7 +389,7 @@ if __name__ == '__main__':
         "-d", "--daily", help="only write daily ESP data", action="store_true"
     )
     parser.add_argument(
-        "-m", "--monthly", help="only write daily ESP data", action="store_true"
+        "-m", "--monthly", help="only write monthly ESP data", action="store_true"
     )
     parser.add_argument(
         "-p", "--print", help="print mrid mapping", action="store_true"
@@ -397,7 +401,8 @@ if __name__ == '__main__':
         "-o", "--office", help="pick between 'uc' or 'alb' office", default='uc'
     )
     parser.add_argument(
-        "-w", "--workers", help="number of threads to use in async write"
+        "-w", "--workers", help="number of threads to use in async write", 
+        default=DEFAULT_WORKERS
     )
     parser.add_argument(
         "-s", 
@@ -420,11 +425,13 @@ if __name__ == '__main__':
                 print(f'mrid_esp_map.json exported to {args.file}')
         else:
             print(f'{args.file} does not exist.')
-        sys.exit(0)
-    workers = 10
+        sys.exit(1)
     if args.workers:
         if str(args.workers).isnumeric():
             workers = int(args.workers)
+        else:
+            print(f'{args.workers} is not a valid number of workers, try again')
+            sys.exit(1)
     async_run = True
     if args.single:
         async_run = False
@@ -446,6 +453,7 @@ if __name__ == '__main__':
         f'{office.upper()} ESP fetch starting at {s_time.strftime("%x %X")}...', 
         logger
     )
+
     config = get_eng_config(db='uc')
     hdb = Hdb(config)
     tbls = HdbTables
