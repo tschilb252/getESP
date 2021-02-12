@@ -38,6 +38,21 @@ def get_nws_region(office='uc'):
     }
     return nws_region_dict[office]
 
+def get_nws_headers(office='uc', attr='site_name'):
+        nws_header_dict ={
+            'uc': {
+                'site_name': 'DESCRIPTION',
+                'rfc_id': 'CBRFCID',
+                'usgs_id': 'USGSID',
+            },
+            'alb': {
+                'site_name': 'Name',
+                'rfc_id': 'TRACE ID',
+                'usgs_id': 'USGS ID',
+            }
+        }
+        return nws_header_dict[office][attr]
+
 def get_api_url(server='uc'):
     if server == 'uc':
         return 'http://ibr4ucrap020.bor.doi.net/series/m-write'
@@ -485,13 +500,13 @@ if __name__ == '__main__':
     mnthly_adj = get_frcst_type(interval='monthly', adj=True)
     mnthly_raw = get_frcst_type(interval='monthly')
     frcst_types = get_frcst_types(args)
-    
+
     for idx, row in df_site_map.iterrows():
         for frcst_type in frcst_types:
             frcst_dict[frcst_type] = {}
-        site_name = row['DESCRIPTION']
-        rfc_id = row[f'{nws_region}RFCID']
-        usgs_id = str(row['USGSID'])
+        site_name = row[get_nws_headers(office, 'site_name')]
+        rfc_id = row[get_nws_headers(office, 'rfc_id')]
+        usgs_id = str(get_nws_headers(office, 'usgs_id'))
         sdi = None
         meta_row = None
         if usgs_id:
