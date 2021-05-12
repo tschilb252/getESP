@@ -34,9 +34,11 @@
     "ESP ADJ 2013": 100287,
     "ESP ADJ 2014": 100288,
     "ESP ADJ 2015": 100289,
-    "ESP ADJ MAX": 100274,
-    "ESP ADJ MIN": 100275,
-    "ESP ADJ MOST": 100276,
+    "ESP ADJ 90percent": 100274,
+    "ESP ADJ 10percent": 100275,
+    "ESP ADJ 50percent": 100276,
+    "ESP ADJ 30percent": 100343,
+    "ESP ADJ 70percent": 100344,
     "ESP RAW 1981": 100211,
     "ESP RAW 1982": 100212,
     "ESP RAW 1983": 100213,
@@ -72,7 +74,9 @@
     "ESP RAW 2013": 100279,
     "ESP RAW 2014": 100280,
     "ESP RAW 2015": 100281,
-    "ESP RAW MAX": 100241,
-    "ESP RAW MIN": 100242,
-    "ESP RAW MOST": 100243
+    "ESP RAW 90percent": 100241,
+    "ESP RAW 10percent": 100242,
+    "ESP RAW 50percent": 100243,
+    "ESP RAW 30percent": 100341,
+    "ESP RAW 70percent": 100342
 }

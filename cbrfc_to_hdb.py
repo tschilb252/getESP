@@ -162,12 +162,16 @@ def get_frcst_obj(rfc_id, frcst_type, mrid_dict, office='uc', write_json=False):
             
         df.dropna(how='all', inplace=True)
         df_stats = df.transpose()
-        df_stats = df_stats.describe(percentiles=[0.10, 0.50, 0.90])
+        df_stats = df_stats.describe(
+            percentiles=[0.10, 0.30, 0.50, 0.70, 0.90]
+        )
         df_stats = df_stats.transpose()
-        df['MOST'] = df_stats['50%']
-        df['MAX'] = df_stats['90%']
-        df['MIN'] = df_stats['10%']
-        
+        df['10percent'] = df_stats['10%']
+        df['30percent'] = df_stats['30%']
+        df['50percent'] = df_stats['50%']
+        df['70percent'] = df_stats['70%']
+        df['90percent'] = df_stats['90%']
+
         df_m_write = df.apply(
             lambda col: parse_m_write(col, sdi, frcst_type, mrid_dict)
         )
@@ -441,12 +445,14 @@ if __name__ == '__main__':
         else:
             print(f'{args.file} does not exist.')
         sys.exit(1)
+        
     if args.workers:
         if str(args.workers).isnumeric():
             workers = int(args.workers)
         else:
             print(f'{args.workers} is not a valid number of workers, try again')
             sys.exit(1)
+            
     async_run = True
     if args.single:
         async_run = False
