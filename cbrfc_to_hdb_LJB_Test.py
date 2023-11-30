@@ -59,7 +59,7 @@ def get_nws_headers(office='uc', attr='site_name'):
 #    return 'http://ibr3lcrsrv02.bor.doi.net/series/m-write'
 #
 
-# clj 11/22/2023 temporary change for testing.  LC API server migrated to Azure Cloud.
+# clj 11/22/2023 temporary change for ttesting.  LC API server migrated to Azure Cloud.
 def get_api_url(server='uc'):
     if server == 'uc':
 #        return 'http://ibr4ucrap020.bor.doi.net/series/m-write'
@@ -170,15 +170,13 @@ def get_frcst_obj(rfc_id, frcst_type, mrid_dict, office='uc', write_json=False):
             
         df.dropna(how='all', inplace=True)
         df_stats = df.transpose()
-        df_stats = df_stats.describe(
-            percentiles=[0.10, 0.30, 0.50, 0.70, 0.90]
-        )
+        df_stats = df_stats.describe(percentiles=[0.10, 0.30, 0.50, 0.70, 0.90])
         df_stats = df_stats.transpose()
-        df['10percent'] = df_stats['10%']
-        df['30percent'] = df_stats['30%']
-        df['50percent'] = df_stats['50%']
-        df['70percent'] = df_stats['70%']
-        df['90percent'] = df_stats['90%']
+        df['10PERCENT'] = df_stats['10%']
+        df['30PERCENT'] = df_stats['30%']
+        df['50PERCENT'] = df_stats['50%']
+        df['70PERCENT'] = df_stats['70%']
+        df['90PERCENT'] = df_stats['90%']
 
         df_m_write = df.apply(
             lambda col: parse_m_write(col, sdi, frcst_type, mrid_dict)
@@ -229,8 +227,8 @@ def create_esp_mrids():
     eng = make_eng(db='uc')
     with eng.connect() as conn:
         for model_id, data_type in model_ids.items():
-            esp_traces = [str(i) for i in range(2016, 2021)]
-            #esp_traces.extend(['MAX', 'MIN', 'MOST'])
+            esp_traces = [str(i) for i in range(1981, 2016)]
+            esp_traces.extend(['10PERCENT', '30PERCENT', '50PERCENT', '70PERCENT', '90PERCENT'])
             mrid_names = [f'ESP {data_type} {i}' for i in esp_traces]
             for i, esp_trace in enumerate(esp_traces):
                 run_name = mrid_names[i]
@@ -296,11 +294,8 @@ async def async_post_traces(df_m_write, logger, workers=10):
     
     m_write_list = []
     for idx, row in df_m_write.iterrows():
-        if not row['m_write']:
-            print(f"could not parse json for {idx}, it is of type {type(row['m_write'])}")
-            continue
         m_write_list.append({'year': idx, 'data': json.loads(row['m_write'])})
-		
+        
     with ThreadPoolExecutor(max_workers=workers) as executor:
         loop = asyncio.get_event_loop()
         futures = [
@@ -399,7 +394,7 @@ def get_frcst_types(args): #dear god this is ugly clean up with dicts
         
     return frcst_types
 if __name__ == '__main__':
-	
+    
     import argparse
     cli_desc = '''
     Downloads RFC ESP Traces and pushes data to UCHDB, 
@@ -442,6 +437,7 @@ if __name__ == '__main__':
         action="store_true"
     )
     args = parser.parse_args()
+    
     if args.version:
         print('rfc_to_hdb.py v1.0')
     if args.print:
@@ -455,14 +451,12 @@ if __name__ == '__main__':
         else:
             print(f'{args.file} does not exist.')
         sys.exit(1)
-        
     if args.workers:
         if str(args.workers).isnumeric():
             workers = int(args.workers)
         else:
             print(f'{args.workers} is not a valid number of workers, try again')
             sys.exit(1)
-            
     async_run = True
     if args.single:
         async_run = False

@@ -25,8 +25,11 @@ from hdb_api.hdb_utils import get_eng_config, create_hdb_engine
 def get_frcst_url():
     return 'https://www.cbrfc.noaa.gov/outgoing/ucbor'
 
+
+# clj 11/22/2023 LC HDB API server migrated to Azure Cloud. New server is: ibrmazwb011.bor.doi.net
 def get_api_url():
-    return 'http://ibr3lcrsrv02.bor.doi.net/series/m-delete'
+#    return 'http://ibr3lcrsrv02.bor.doi.net/series/m-delete'
+    return 'http://ibrmazwb011.bor.doi.net/series/m-delete'
 
 
 def get_write_hdr(hdb_config): 
